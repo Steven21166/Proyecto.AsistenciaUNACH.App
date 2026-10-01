@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/asistencia_model.dart';
 import '../models/docente_model.dart';
 import '../services/api_service.dart';
+import '../services/asistencia_local_service.dart';
 
 class RegistroAsistenciaScreen extends StatefulWidget {
   final Asignatura? asignatura;
@@ -75,7 +76,8 @@ class _RegistroAsistenciaScreenState extends State<RegistroAsistenciaScreen> {
       ),
     );
 
-    int guardadosExitosos = 0;
+    int guardadosOnline = 0;
+    int guardadosOffline = 0;
 
     for (var estudiante in estudiantes) {
       String estado = _asistenciasMap[estudiante.idEstudiante] ?? 'Presente';
@@ -89,36 +91,40 @@ class _RegistroAsistenciaScreenState extends State<RegistroAsistenciaScreen> {
         estadoAsistencia: estado,
       );
 
-      bool exito = await _apiService.registrarAsistencia(registro);
-      if (exito) guardadosExitosos++;
+      try {
+        bool exito = await _apiService.registrarAsistencia(registro);
+        if (exito) {
+          guardadosOnline++;
+        } else {
+          await AsistenciaLocalService.guardarAsistenciaLocal(registro);
+          guardadosOffline++;
+        }
+      } catch (e) {
+        await AsistenciaLocalService.guardarAsistenciaLocal(registro);
+        guardadosOffline++;
+      }
     }
 
-    Navigator.pop(context);
+    Navigator.pop(context); // Cierra el indicador de carga
 
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
-          children: [
-            Icon(Icons.check_circle, color: Colors.green),
-            SizedBox(width: 8),
-            Text('¡Éxito!'),
-          ],
+    // Muestra el resultado mediante un SnackBar claro para el docente
+    if (guardadosOffline == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('¡Éxito! $guardadosOnline registros sincronizados y guardados en la base de datos.'),
+          backgroundColor: Colors.green,
         ),
-        content: Text('Registros guardados correctamente: $guardadosExitosos de ${estudiantes.length}'),
-        actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF1E3A8A), foregroundColor: Colors.white),
-            onPressed: () {
-              Navigator.pop(context);
-              Navigator.pop(context);
-            },
-            child: const Text('Aceptar'),
-          ),
-        ],
-      ),
-    );
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Sin conexión: $guardadosOffline listas guardadas localmente para sincronizar después.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+
+    Navigator.pop(context); // Regresa a la vista anterior
   }
 
   void _mostrarHistorial(BuildContext context) {
@@ -269,7 +275,6 @@ class _RegistroAsistenciaScreenState extends State<RegistroAsistenciaScreen> {
 
           return Column(
             children: [
-              // Barra superior con BoxDecoration correcto para boxShadow
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 decoration: BoxDecoration(
@@ -298,8 +303,6 @@ class _RegistroAsistenciaScreenState extends State<RegistroAsistenciaScreen> {
                   ],
                 ),
               ),
-
-              // Contadores en Vivo Estilizados
               Container(
                 padding: const EdgeInsets.all(12),
                 child: Row(
@@ -312,8 +315,6 @@ class _RegistroAsistenciaScreenState extends State<RegistroAsistenciaScreen> {
                   ],
                 ),
               ),
-
-              // Buscador moderno
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                 child: TextField(
@@ -336,10 +337,7 @@ class _RegistroAsistenciaScreenState extends State<RegistroAsistenciaScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 4),
-
-              // Listado de Estudiantes
               Expanded(
                 child: estudiantesFiltrados.isEmpty
                     ? const Center(
@@ -412,8 +410,6 @@ class _RegistroAsistenciaScreenState extends State<RegistroAsistenciaScreen> {
                         },
                       ),
               ),
-
-              // Botón Inferior Corregido
               if (estudiantesSemestre.isNotEmpty)
                 Container(
                   padding: const EdgeInsets.all(16),

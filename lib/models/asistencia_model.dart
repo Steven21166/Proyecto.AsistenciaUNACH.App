@@ -28,7 +28,7 @@ class Estudiante {
   }
 }
 
-// Modelo para el Registro de Asistencia (que coincide con tu tabla central en SQL Server)
+// Modelo para el Registro de Asistencia
 class AsistenciaEstudiante {
   final int? idAsistencia;
   final int idEstudiante;
@@ -36,7 +36,7 @@ class AsistenciaEstudiante {
   final int idDocente;
   final String fechaAsistencia;
   final String horaRegistro;
-  final String estadoAsistencia; // Ejemplo: 'Presente', 'Ausente', etc.
+  final String estadoAsistencia;
 
   AsistenciaEstudiante({
     this.idAsistencia,
@@ -48,9 +48,9 @@ class AsistenciaEstudiante {
     required this.estadoAsistencia,
   });
 
-  Map<String, dynamic> toJson() {
-    return {
-      'idAsistencia': idAsistencia,
+  // Convertir a JSON (para enviar a la API o guardar localmente)
+Map<String, dynamic> toJson() {
+    final Map<String, dynamic> data = {
       'idEstudiante': idEstudiante,
       'idAsignatura': idAsignatura,
       'idDocente': idDocente,
@@ -58,5 +58,25 @@ class AsistenciaEstudiante {
       'horaRegistro': horaRegistro,
       'estadoAsistencia': estadoAsistencia,
     };
+    
+    // Solo lo incluimos si ya tiene un valor (para cuando se actualice)
+    if (idAsistencia != null) {
+      data['idAsistencia'] = idAsistencia;
+    }
+    
+    return data;
   }
-} 
+
+  // Convertir desde JSON (para leer de la memoria local o de la API)
+  factory AsistenciaEstudiante.fromJson(Map<String, dynamic> json) {
+    return AsistenciaEstudiante(
+      idAsistencia: json['idAsistencia'],
+      idEstudiante: json['idEstudiante'] ?? 0,
+      idAsignatura: json['idAsignatura'] ?? 0,
+      idDocente: json['idDocente'] ?? 0,
+      fechaAsistencia: json['fechaAsistencia'] ?? '',
+      horaRegistro: json['horaRegistro'] ?? '',
+      estadoAsistencia: json['estadoAsistencia'] ?? '',
+    );
+  }
+}

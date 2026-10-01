@@ -1,160 +1,797 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:async'; // Necesario para el Timeout
+
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
 
-import '../models/asistencia_model.dart'; // Contiene Estudiante y AsistenciaEstudiante
+import '../models/asistencia_model.dart';
 import '../models/docente_model.dart';
-import 'asistencia_local_service.dart'; // El servicio local para el modo Offline
+import 'asistencia_local_service.dart';
 
 class ApiService {
-  // Nota: Si pruebas en un celular físico o emulador Android y no conecta, 
-  // cambia 'localhost' por la IP de tu computadora (ej: 'http://192.168.x.x:5256/api')
-  final String baseUrl = 'http://localhost:5256/api';
+  // ============================================================
+  // URL DE LA API
+  // ============================================================
+
+  // Android Emulator
+  final String baseUrl = 'http://10.0.2.2:5256/api';
+
+  // Celular físico:
+  // final String baseUrl = 'http://192.168.1.100:5256/api';
+
+  // ============================================================
+  // CLIENTE HTTP
+  // ============================================================
 
   http.Client _getClient() {
-    HttpClient client = HttpClient()
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) => true;
+    final HttpClient client = HttpClient()
+      ..badCertificateCallback =
+          (X509Certificate cert, String host, int port) => true;
+
     return IOClient(client);
   }
 
-  Future<List<Estudiante>> getEstudiantes() async {
+  // ============================================================
+  // VERIFICAR INTERNET
+  // ============================================================
+
+  Future<bool> verificarConexionReal() async {
     try {
       final client = _getClient();
-      final response = await client.get(Uri.parse('$baseUrl/estudiante'));
+
+      final response = await client
+          .get(
+            Uri.parse('$baseUrl/estudiante'),
+          )
+          .timeout(
+            const Duration(seconds: 5),
+          );
+
+      client.close();
+
+      if (response.statusCode >= 200 &&
+          response.statusCode < 500) {
+        return true;
+      }
+
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // ============================================================
+  // OBTENER ESTUDIANTES
+  // ============================================================
+
+  Future<List<Estudiante>> getEstudiantes() async {
+    final bool hayRed = await verificarConexionReal();
+
+    // ----------------------------------------------------------
+    // SIN INTERNET
+    // ----------------------------------------------------------
+
+    if (!hayRed) {
+      print(
+        'Sin Internet. Cargando estudiantes desde almacenamiento local...',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerEstudiantesLocales();
+    }
+
+    // ----------------------------------------------------------
+    // CON INTERNET
+    // ----------------------------------------------------------
+
+    try {
+      final client = _getClient();
+
+      final response = await client
+          .get(
+            Uri.parse('$baseUrl/estudiante'),
+          )
+          .timeout(
+            const Duration(seconds: 5),
+          );
 
       if (response.statusCode == 200) {
-        List<dynamic> body = json.decode(response.body);
-        return body.map((item) => Estudiante.fromJson(item)).toList();
-      } else {
-        throw Exception('Error al cargar estudiantes: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('Excepción en getEstudiantes: $e');
-      return [];
-    }
-  }
+        final List<dynamic> body =
+            json.decode(response.body);
 
-  // --- MÉTODO COMPATIBLE CON EL NOMBRE ANTERIOR ---
-  // Este método resuelve el error de compilación devolviendo un bool.
-  Future<bool> registrarAsistencia(AsistenciaEstudiante asistencia) async {
-    final resultado = await registrarAsistenciaConMensaje(asistencia);
-    // Retorna true si guardó (sea online u offline)
-    return resultado == 'online' || resultado == 'offline';
-  }
+        final List<Estudiante> estudiantes = body
+            .map(
+              (item) => Estudiante.fromJson(
+                Map<String, dynamic>.from(item),
+              ),
+            )
+            .toList();
 
-  // --- MÉTODO MODIFICADO PARA SOPORTE ONLINE/OFFLINE CON RETORNO DE ESTADO ---
-  Future<String> registrarAsistenciaConMensaje(AsistenciaEstudiante asistencia) async {
-    try {
-      final client = _getClient();
-      final response = await client.post(
-        Uri.parse('$baseUrl/AsistenciaEstudiante'),
-        headers: <String, String>{
-          'Content-Type': 'application/json; charset=UTF-8',
-        },
-        body: json.encode(asistencia.toJson()),
-      ).timeout(const Duration(seconds: 5)); 
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        return 'online'; // Sincronizado directo con la base de datos
-      } else {
-        await AsistenciaLocalService.guardarAsistenciaLocal(asistencia);
-        return 'offline'; // Guardado localmente por error del servidor
-      }
-    } catch (e) {
-      // Si no hay internet o vence el timeout, se va al almacenamiento local
-      await AsistenciaLocalService.guardarAsistenciaLocal(asistencia);
-      return 'offline'; 
-    }
-  }
-
-  // --- MÉTODO PARA SINCRONIZAR LOS DATOS PENDIENTES ---
-  Future<void> sincronizarAsistenciasPendientes() async {
-    try {
-      // 1. Obtenemos las asistencias guardadas en el celular
-      final pendientes = await AsistenciaLocalService.obtenerAsistenciasPendientes();
-      
-      if (pendientes.isEmpty) {
-        print('No hay asistencias pendientes por sincronizar.');
-        return;
-      }
-
-      print('Intentando sincronizar ${pendientes.length} asistencias a la API...');
-      bool todasExitosas = true;
-
-      // 2. Intentamos enviarlas una por una a la API
-      for (var asistencia in pendientes) {
-        final client = _getClient();
-        final response = await client.post(
-          Uri.parse('$baseUrl/AsistenciaEstudiante'),
-          headers: <String, String>{
-            'Content-Type': 'application/json; charset=UTF-8',
-          },
-          body: json.encode(asistencia.toJson()),
+        await AsistenciaLocalService
+            .guardarEstudiantesLocales(
+          estudiantes,
         );
 
-        if (response.statusCode != 200 && response.statusCode != 201) {
-          todasExitosas = false; // Si una falla, marcamos como false
+        print(
+          '${estudiantes.length} estudiantes obtenidos desde la API.',
+        );
+
+        print(
+          'Estudiantes guardados correctamente en caché local.',
+        );
+
+        return estudiantes;
+      }
+
+      print(
+        'Servidor respondió con código ${response.statusCode}.',
+      );
+
+      print(
+        'Intentando cargar estudiantes locales...',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerEstudiantesLocales();
+    } on TimeoutException {
+      print(
+        'Timeout obteniendo estudiantes.',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerEstudiantesLocales();
+    } on SocketException {
+      print(
+        'Error de conexión obteniendo estudiantes.',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerEstudiantesLocales();
+    } catch (e) {
+      print(
+        'Error obteniendo estudiantes: $e',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerEstudiantesLocales();
+    }
+  }
+
+  // ============================================================
+  // REGISTRAR ASISTENCIA
+  //
+  // RETORNA:
+  // true  = se registró directamente en servidor
+  // false = quedó pendiente localmente
+  // ============================================================
+
+  Future<bool> registrarAsistencia(
+    AsistenciaEstudiante asistencia,
+  ) async {
+    final String resultado =
+        await registrarAsistenciaConMensaje(
+      asistencia,
+    );
+
+    return resultado == 'online';
+  }
+
+  // ============================================================
+  // REGISTRAR ASISTENCIA CON RESULTADO
+  //
+  // RETORNA:
+  //
+  // online  -> se guardó en SQL Server
+  // offline -> se guardó en cola local
+  // error   -> hubo un error del servidor
+  // ============================================================
+
+  Future<String> registrarAsistenciaConMensaje(
+    AsistenciaEstudiante asistencia,
+  ) async {
+    final bool hayRed =
+        await verificarConexionReal();
+
+    // ----------------------------------------------------------
+    // SIN INTERNET
+    // ----------------------------------------------------------
+
+    if (!hayRed) {
+      print('Sin Internet.');
+
+      print(
+        'Guardando asistencia en cola local...',
+      );
+
+      await AsistenciaLocalService
+          .guardarAsistenciaLocal(
+        asistencia,
+      );
+
+      return 'offline';
+    }
+
+    // ----------------------------------------------------------
+    // CON INTERNET
+    // ----------------------------------------------------------
+
+    try {
+      final client = _getClient();
+
+      final response = await client
+          .post(
+            Uri.parse(
+              '$baseUrl/AsistenciaEstudiante',
+            ),
+            headers: {
+              'Content-Type':
+                  'application/json; charset=UTF-8',
+            },
+            body: jsonEncode(
+              asistencia.toJson(),
+            ),
+          )
+          .timeout(
+            const Duration(seconds: 5),
+          );
+
+      if (response.statusCode == 200 ||
+          response.statusCode == 201) {
+        print(
+          'Asistencia registrada correctamente en el servidor.',
+        );
+
+        return 'online';
+      }
+
+      print(
+        'Error del servidor al registrar asistencia.',
+      );
+
+      print(
+        'Código HTTP: ${response.statusCode}',
+      );
+
+      print(
+        'Respuesta: ${response.body}',
+      );
+
+      return 'error';
+    } on TimeoutException {
+      print(
+        'Timeout registrando asistencia.',
+      );
+
+      print(
+        'Guardando asistencia localmente...',
+      );
+
+      await AsistenciaLocalService
+          .guardarAsistenciaLocal(
+        asistencia,
+      );
+
+      return 'offline';
+    } on SocketException {
+      print(
+        'Se perdió la conexión durante el registro.',
+      );
+
+      print(
+        'Guardando asistencia localmente...',
+      );
+
+      await AsistenciaLocalService
+          .guardarAsistenciaLocal(
+        asistencia,
+      );
+
+      return 'offline';
+    } catch (e) {
+      print(
+        'Error registrando asistencia: $e',
+      );
+
+      await AsistenciaLocalService
+          .guardarAsistenciaLocal(
+        asistencia,
+      );
+
+      return 'offline';
+    }
+  }
+
+  // ============================================================
+  // ENVIAR ASISTENCIA DIRECTAMENTE AL SERVIDOR
+  // ============================================================
+
+  Future<bool> _enviarAsistenciaAlServidor(
+    AsistenciaEstudiante asistencia,
+  ) async {
+    try {
+      final client = _getClient();
+
+      final response = await client
+          .post(
+            Uri.parse(
+              '$baseUrl/AsistenciaEstudiante',
+            ),
+            headers: {
+              'Content-Type':
+                  'application/json; charset=UTF-8',
+            },
+            body: jsonEncode(
+              asistencia.toJson(),
+            ),
+          )
+          .timeout(
+            const Duration(seconds: 5),
+          );
+
+      if (response.statusCode == 200 ||
+          response.statusCode == 201) {
+        print(
+          'Asistencia enviada correctamente al servidor.',
+        );
+
+        return true;
+      }
+
+      print(
+        'No se pudo sincronizar una asistencia.',
+      );
+
+      print(
+        'Código HTTP: ${response.statusCode}',
+      );
+
+      print(
+        'Respuesta: ${response.body}',
+      );
+
+      return false;
+    } on TimeoutException {
+      print(
+        'Timeout durante la sincronización.',
+      );
+
+      return false;
+    } on SocketException {
+      print(
+        'Conexión perdida durante la sincronización.',
+      );
+
+      return false;
+    } catch (e) {
+      print(
+        'Error enviando asistencia al servidor: $e',
+      );
+
+      return false;
+    }
+  }
+
+  // ============================================================
+  // SINCRONIZAR ASISTENCIAS PENDIENTES
+  // ============================================================
+
+  Future<bool> sincronizarPendientes() async {
+    final bool hayRed =
+        await verificarConexionReal();
+
+    if (!hayRed) {
+      print(
+        'No hay Internet. No se puede sincronizar.',
+      );
+
+      return false;
+    }
+
+    try {
+      final List<AsistenciaEstudiante> pendientes =
+          await AsistenciaLocalService
+              .obtenerAsistenciasPendientes();
+
+      if (pendientes.isEmpty) {
+        print(
+          'No existen asistencias pendientes.',
+        );
+
+        return true;
+      }
+
+      print(
+        '==========================================',
+      );
+
+      print(
+        'ASISTENCIAS PENDIENTES: ${pendientes.length}',
+      );
+
+      print(
+        '==========================================',
+      );
+
+      final List<AsistenciaEstudiante>
+          pendientesRestantes = [];
+
+      for (final asistencia in pendientes) {
+        print(
+          'Sincronizando asistencia:',
+        );
+
+        print(
+          'Estudiante: ${asistencia.idEstudiante}',
+        );
+
+        print(
+          'Asignatura: ${asistencia.idAsignatura}',
+        );
+
+        print(
+          'Docente: ${asistencia.idDocente}',
+        );
+
+        print(
+          'Estado: ${asistencia.estadoAsistencia}',
+        );
+
+        final bool exito =
+            await _enviarAsistenciaAlServidor(
+          asistencia,
+        );
+
+        if (!exito) {
+          pendientesRestantes.add(
+            asistencia,
+          );
+
+          print(
+            'La asistencia permanecerá pendiente.',
+          );
+        } else {
+          print(
+            'Asistencia sincronizada correctamente.',
+          );
         }
       }
 
-      // 3. Si todas subieron correctamente, borramos la memoria local del celular
-      if (todasExitosas) {
-        await AsistenciaLocalService.limpiarAsistenciasPendientes();
-        print('Sincronización completada con éxito. Memoria local limpiada.');
-      } else {
-        print('Algunas asistencias no se pudieron sincronizar. Se reintentará luego.');
+      if (pendientesRestantes.isEmpty) {
+        await AsistenciaLocalService
+            .limpiarAsistenciasPendientes();
+
+        print(
+          '==========================================',
+        );
+
+        print(
+          'SINCRONIZACIÓN COMPLETADA',
+        );
+
+        print(
+          'Todas las asistencias fueron enviadas.',
+        );
+
+        print(
+          'Cola local vaciada correctamente.',
+        );
+
+        print(
+          '==========================================',
+        );
+
+        return true;
       }
+
+      print(
+        'Quedaron '
+        '${pendientesRestantes.length} '
+        'asistencias pendientes.',
+      );
+
+      await AsistenciaLocalService
+          .guardarAsistenciasPendientes(
+        pendientesRestantes,
+      );
+
+      print(
+        'Las asistencias fallidas permanecen guardadas localmente.',
+      );
+
+      return false;
     } catch (e) {
-      print('Error al intentar sincronizar: $e');
+      print(
+        'Error sincronizando asistencias pendientes: $e',
+      );
+
+      return false;
     }
   }
 
-  // Historial de asistencias seguro
-  Future<List<AsistenciaEstudiante>> getHistorialAsistencia(int idAsignatura) async {
+  // ============================================================
+  // COMPATIBILIDAD
+  // ============================================================
+
+  Future<void> sincronizarAsistenciasPendientes() async {
+    await sincronizarPendientes();
+  }
+
+  // ============================================================
+  // HISTORIAL DE ASISTENCIA
+  // ============================================================
+
+  Future<List<AsistenciaEstudiante>>
+      getHistorialAsistencia(
+    int idAsignatura,
+  ) async {
     try {
       final client = _getClient();
-      final response = await client.get(Uri.parse('$baseUrl/AsistenciaEstudiante/asignatura/$idAsignatura'));
+
+      final response = await client
+          .get(
+            Uri.parse(
+              '$baseUrl/AsistenciaEstudiante/asignatura/$idAsignatura',
+            ),
+          )
+          .timeout(
+            const Duration(seconds: 5),
+          );
+
+      client.close();
 
       if (response.statusCode == 200) {
-        List<dynamic> body = json.decode(response.body);
-        // Mapeo seguro adaptado al modelo existente
-        return body.map((item) => AsistenciaEstudiante(
-          idEstudiante: item['idEstudiante'] ?? 0,
-          idAsignatura: item['idAsignatura'] ?? 0,
-          idDocente: item['idDocente'] ?? 0,
-          fechaAsistencia: item['fechaAsistencia'] ?? '',
-          horaRegistro: item['horaRegistro'] ?? '',
-          estadoAsistencia: item['estadoAsistencia'] ?? 'Presente',
-        )).toList();
-      } else {
-        return [];
+        final List<dynamic> body =
+            json.decode(response.body);
+
+        final List<AsistenciaEstudiante>
+            historial =
+            body.map((item) {
+          return AsistenciaEstudiante(
+            idAsistencia:
+                item['idAsistencia'],
+            idEstudiante:
+                item['idEstudiante'] ?? 0,
+            idAsignatura:
+                item['idAsignatura'] ?? 0,
+            idDocente:
+                item['idDocente'] ?? 0,
+            fechaAsistencia:
+                item['fechaAsistencia'] ?? '',
+            horaRegistro:
+                item['horaRegistro'] ?? '',
+            estadoAsistencia:
+                item['estadoAsistencia'] ??
+                    'Presente',
+          );
+        }).toList();
+
+        // Más recientes primero
+        historial.sort((a, b) {
+          final fechaA =
+              '${a.fechaAsistencia} ${a.horaRegistro}';
+
+          final fechaB =
+              '${b.fechaAsistencia} ${b.horaRegistro}';
+
+          return fechaB.compareTo(fechaA);
+        });
+
+        await AsistenciaLocalService
+            .guardarHistorialLocal(
+          idAsignatura,
+          historial,
+        );
+
+        print(
+          'Historial recibido desde SQL Server: '
+          '${historial.length} registros.',
+        );
+
+        return historial;
       }
+
+      print(
+        'Servidor respondió con código ${response.statusCode}.',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerHistorialLocal(
+        idAsignatura,
+      );
+    } on TimeoutException {
+      print(
+        'Timeout consultando historial.',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerHistorialLocal(
+        idAsignatura,
+      );
+    } on SocketException {
+      print(
+        'Error de conexión consultando historial.',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerHistorialLocal(
+        idAsignatura,
+      );
     } catch (e) {
-      print('Excepción en getHistorialAsistencia: $e');
-      return [];
+      print(
+        'Excepción en getHistorialAsistencia: $e',
+      );
+
+      return await AsistenciaLocalService
+          .obtenerHistorialLocal(
+        idAsignatura,
+      );
     }
   }
 
-  Future<Docente?> loginDocente(String correo, String cedula) async {
+  // ============================================================
+  // LOGIN DOCENTE
+  // ============================================================
+
+  Future<Docente?> loginDocente(
+    String correo,
+    String cedula,
+  ) async {
     try {
       final client = _getClient();
-      final encodedCorreo = Uri.encodeComponent(correo);
-      final encodedCedula = Uri.encodeComponent(cedula);
 
-      final url = Uri.parse('$baseUrl/docente/login?correo=$encodedCorreo&cedula=$encodedCedula');
-      
-      final response = await client.get(url);
+      final String encodedCorreo =
+          Uri.encodeComponent(
+        correo.trim(),
+      );
+
+      final String encodedCedula =
+          Uri.encodeComponent(
+        cedula.trim(),
+      );
+
+      final Uri url = Uri.parse(
+        '$baseUrl/docente/login'
+        '?correo=$encodedCorreo'
+        '&cedula=$encodedCedula',
+      );
+
+      final response = await client
+          .get(url)
+          .timeout(
+            const Duration(seconds: 5),
+          );
+
+      client.close();
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        return Docente.fromJson(data);
-      } else {
+        final data =
+            jsonDecode(response.body);
+
+        final Docente docente =
+            Docente.fromJson(
+          Map<String, dynamic>.from(data),
+        );
+
+        await AsistenciaLocalService
+            .guardarDocenteLocal(
+          docente,
+        );
+
+        await AsistenciaLocalService
+            .guardarCredencialesDocente(
+          correo,
+          cedula,
+        );
+
+        print(
+          'Login online exitoso.',
+        );
+
+        print(
+          'Docente guardado localmente.',
+        );
+
+        return docente;
+      }
+
+      print(
+        'Login rechazado por el servidor.',
+      );
+
+      return null;
+    } on TimeoutException {
+      print(
+        'Timeout durante el login.',
+      );
+
+      print(
+        'Intentando iniciar sesión desde caché local...',
+      );
+
+      return await _intentarLoginLocal(
+        correo,
+        cedula,
+      );
+    } on SocketException {
+      print(
+        'Error de conexión durante el login.',
+      );
+
+      print(
+        'Intentando iniciar sesión desde caché local...',
+      );
+
+      return await _intentarLoginLocal(
+        correo,
+        cedula,
+      );
+    } catch (e) {
+      print(
+        'Error en login: $e',
+      );
+
+      print(
+        'Intentando iniciar sesión desde caché local...',
+      );
+
+      return await _intentarLoginLocal(
+        correo,
+        cedula,
+      );
+    }
+  }
+
+  // ============================================================
+  // LOGIN LOCAL
+  // ============================================================
+
+  Future<Docente?> _intentarLoginLocal(
+    String correo,
+    String cedula,
+  ) async {
+    try {
+      final bool credencialesCorrectas =
+          await AsistenciaLocalService
+              .validarCredencialesDocente(
+        correo,
+        cedula,
+      );
+
+      if (!credencialesCorrectas) {
+        print(
+          'Correo o cédula incorrectos para login offline.',
+        );
+
         return null;
       }
+
+      final Docente? docenteLocal =
+          await AsistenciaLocalService
+              .obtenerDocenteLocal();
+
+      if (docenteLocal == null) {
+        print(
+          'No existe un docente guardado localmente.',
+        );
+
+        return null;
+      }
+
+      print(
+        'Login offline exitoso.',
+      );
+
+      print(
+        'Docente recuperado: ${docenteLocal.correo}',
+      );
+
+      return docenteLocal;
     } catch (e) {
-      print('Error en login: $e');
+      print(
+        'Error intentando login local: $e',
+      );
+
       return null;
     }
   }

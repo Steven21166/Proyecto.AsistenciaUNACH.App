@@ -49,7 +49,7 @@ class AsistenciaEstudiante {
   });
 
   // Convertir a JSON (para enviar a la API o guardar localmente)
-Map<String, dynamic> toJson() {
+  Map<String, dynamic> toJson() {
     final Map<String, dynamic> data = {
       'idEstudiante': idEstudiante,
       'idAsignatura': idAsignatura,

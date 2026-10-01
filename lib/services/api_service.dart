@@ -15,7 +15,7 @@ class ApiService {
   // ============================================================
 
   // Android Emulator
-  final String baseUrl = 'http://10.0.2.2:5256/api';
+  final String baseUrl = 'https://desktop-1cffthh.tailc8f3f2.ts.net/api';
 
   // Celular físico:
   // final String baseUrl = 'http://192.168.1.100:5256/api';

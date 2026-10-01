@@ -23,6 +23,8 @@ class SincronizacionService {
 
   bool _iniciado = false;
 
+  bool _comprobandoConexion = false;
+
   // ============================================================
   // INICIAR SERVICIO
   // ============================================================
@@ -61,36 +63,88 @@ class SincronizacionService {
   // ============================================================
 
   Future<void> _comprobarConexion() async {
-  try {
-    final bool hayInternet =
-        await _apiService.verificarConexionReal();
-
-    // La conexión acaba de volver
-    if (!_ultimaConexion && hayInternet) {
-      print('==========================================');
-      print('INTERNET RESTAURADO');
-      print('Buscando asistencias pendientes...');
-      print('==========================================');
-
-      await _sincronizar();
+    if (_comprobandoConexion) {
+      return;
     }
 
-    // Mostrar solamente cuando cambia el estado
-    if (hayInternet != _ultimaConexion) {
+    _comprobandoConexion = true;
+
+    try {
+      final bool hayInternet =
+          await _apiService.verificarConexionReal();
+
+      final bool cambioConexion =
+          hayInternet != _ultimaConexion;
+
+      // Actualizar primero para evitar
+      // dos sincronizaciones al mismo tiempo.
+      _ultimaConexion = hayInternet;
+
+      // --------------------------------------------------------
+      // INTERNET DISPONIBLE
+      // --------------------------------------------------------
+
       if (hayInternet) {
-        print('CONEXIÓN: ONLINE');
-      } else {
-        print('CONEXIÓN: OFFLINE');
-      }
-    }
+        if (cambioConexion) {
+          print(
+            '==========================================',
+          );
 
-    _ultimaConexion = hayInternet;
-  } catch (e) {
-    print(
-      'Error comprobando conexión global: $e',
-    );
+          print(
+            'CONEXIÓN: ONLINE',
+          );
+
+          print(
+            '==========================================',
+          );
+
+          print(
+            'INTERNET RESTAURADO',
+          );
+
+          print(
+            'Buscando asistencias pendientes...',
+          );
+
+          print(
+            '==========================================',
+          );
+
+          await _sincronizar();
+        }
+      }
+
+      // --------------------------------------------------------
+      // SIN INTERNET
+      // --------------------------------------------------------
+
+      else {
+        if (cambioConexion) {
+          print(
+            '==========================================',
+          );
+
+          print(
+            'CONEXIÓN: OFFLINE',
+          );
+
+          print(
+            'Esperando restauración de Internet...',
+          );
+
+          print(
+            '==========================================',
+          );
+        }
+      }
+    } catch (e) {
+      print(
+        'Error comprobando conexión global: $e',
+      );
+    } finally {
+      _comprobandoConexion = false;
+    }
   }
-}
 
   // ============================================================
   // SINCRONIZAR
@@ -179,6 +233,8 @@ class SincronizacionService {
     _timer = null;
 
     _iniciado = false;
+
+    _comprobandoConexion = false;
 
     print(
       'Servicio de sincronización detenido.',

@@ -33,29 +33,22 @@ class ApiService {
   }
 
   // ============================================================
-  // VERIFICAR INTERNET
+  // VERIFICAR CONEXIÓN REAL CON LA API
   // ============================================================
 
   Future<bool> verificarConexionReal() async {
     try {
-      final client = _getClient();
+      final uri = Uri.parse(baseUrl);
 
-      final response = await client
-          .get(
-            Uri.parse('$baseUrl/estudiante'),
-          )
-          .timeout(
-            const Duration(seconds: 5),
-          );
+      final socket = await Socket.connect(
+        uri.host,
+        uri.port,
+        timeout: const Duration(seconds: 2),
+      );
 
-      client.close();
+      socket.destroy();
 
-      if (response.statusCode >= 200 &&
-          response.statusCode < 500) {
-        return true;
-      }
-
-      return false;
+      return true;
     } catch (e) {
       return false;
     }
@@ -95,6 +88,8 @@ class ApiService {
           .timeout(
             const Duration(seconds: 5),
           );
+
+      client.close();
 
       if (response.statusCode == 200) {
         final List<dynamic> body =
@@ -190,32 +185,6 @@ class ApiService {
   Future<String> registrarAsistenciaConMensaje(
     AsistenciaEstudiante asistencia,
   ) async {
-    final bool hayRed =
-        await verificarConexionReal();
-
-    // ----------------------------------------------------------
-    // SIN INTERNET
-    // ----------------------------------------------------------
-
-    if (!hayRed) {
-      print('Sin Internet.');
-
-      print(
-        'Guardando asistencia en cola local...',
-      );
-
-      await AsistenciaLocalService
-          .guardarAsistenciaLocal(
-        asistencia,
-      );
-
-      return 'offline';
-    }
-
-    // ----------------------------------------------------------
-    // CON INTERNET
-    // ----------------------------------------------------------
-
     try {
       final client = _getClient();
 
@@ -236,6 +205,12 @@ class ApiService {
             const Duration(seconds: 5),
           );
 
+      client.close();
+
+      // --------------------------------------------------------
+      // REGISTRO CORRECTO
+      // --------------------------------------------------------
+
       if (response.statusCode == 200 ||
           response.statusCode == 201) {
         print(
@@ -244,6 +219,10 @@ class ApiService {
 
         return 'online';
       }
+
+      // --------------------------------------------------------
+      // ERROR DEL SERVIDOR
+      // --------------------------------------------------------
 
       print(
         'Error del servidor al registrar asistencia.',
@@ -329,6 +308,8 @@ class ApiService {
             const Duration(seconds: 5),
           );
 
+      client.close();
+
       if (response.statusCode == 200 ||
           response.statusCode == 201) {
         print(
@@ -377,17 +358,6 @@ class ApiService {
   // ============================================================
 
   Future<bool> sincronizarPendientes() async {
-    final bool hayRed =
-        await verificarConexionReal();
-
-    if (!hayRed) {
-      print(
-        'No hay Internet. No se puede sincronizar.',
-      );
-
-      return false;
-    }
-
     try {
       final List<AsistenciaEstudiante> pendientes =
           await AsistenciaLocalService
@@ -415,6 +385,10 @@ class ApiService {
 
       final List<AsistenciaEstudiante>
           pendientesRestantes = [];
+
+      // --------------------------------------------------------
+      // ENVIAR UNA POR UNA
+      // --------------------------------------------------------
 
       for (final asistencia in pendientes) {
         print(
@@ -457,6 +431,10 @@ class ApiService {
         }
       }
 
+      // --------------------------------------------------------
+      // TODAS SINCRONIZADAS
+      // --------------------------------------------------------
+
       if (pendientesRestantes.isEmpty) {
         await AsistenciaLocalService
             .limpiarAsistenciasPendientes();
@@ -483,6 +461,10 @@ class ApiService {
 
         return true;
       }
+
+      // --------------------------------------------------------
+      // QUEDARON PENDIENTES
+      // --------------------------------------------------------
 
       print(
         'Quedaron '
